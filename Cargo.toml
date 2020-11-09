@@ -1,5 +1,5 @@
 [package]
-name = "Balanced-BST-in-Rust"
+name = "balanced-bst-in-rust"
 version = "0.1.0"
 authors = ["김태우 <travis1829@naver.com>"]
 edition = "2018"

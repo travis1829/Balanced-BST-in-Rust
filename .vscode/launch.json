@@ -7,15 +7,34 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'Balanced-BST-in-Rust'",
+            "name": "Debug unit tests in library 'balanced-bst-in-rust'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=balanced-bst-in-rust"
+                ],
+                "filter": {
+                    "name": "balanced-bst-in-rust",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'balanced-bst-in-rust'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=Balanced-BST-in-Rust",
-                    "--package=Balanced-BST-in-Rust"
+                    "--bin=balanced-bst-in-rust",
+                    "--package=balanced-bst-in-rust"
                 ],
                 "filter": {
-                    "name": "Balanced-BST-in-Rust",
+                    "name": "balanced-bst-in-rust",
                     "kind": "bin"
                 }
             },
@@ -25,17 +44,36 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'Balanced-BST-in-Rust'",
+            "name": "Debug unit tests in executable 'balanced-bst-in-rust'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=Balanced-BST-in-Rust",
-                    "--package=Balanced-BST-in-Rust"
+                    "--bin=balanced-bst-in-rust",
+                    "--package=balanced-bst-in-rust"
                 ],
                 "filter": {
-                    "name": "Balanced-BST-in-Rust",
+                    "name": "balanced-bst-in-rust",
                     "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug integration test 'balanced_bst_test'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--test=balanced_bst_test",
+                    "--package=balanced-bst-in-rust"
+                ],
+                "filter": {
+                    "name": "balanced_bst_test",
+                    "kind": "test"
                 }
             },
             "args": [],

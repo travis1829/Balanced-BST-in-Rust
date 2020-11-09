@@ -1,4 +1,4 @@
-use Balanced_BST_in_Rust::BBST;
+use balanced_bst_in_rust::BBST;
 
 #[test]
 fn test_basic() {

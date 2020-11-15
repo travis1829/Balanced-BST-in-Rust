@@ -63,16 +63,54 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug integration test 'balanced_bst_test'",
+            "name": "Debug integration test 'bbst_fast_rebuild_test'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--test=balanced_bst_test",
+                    "--test=bbst_fast_rebuild_test",
                     "--package=balanced-bst-in-rust"
                 ],
                 "filter": {
-                    "name": "balanced_bst_test",
+                    "name": "bbst_fast_rebuild_test",
+                    "kind": "test"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug integration test 'bbst_locked_test'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--test=bbst_locked_test",
+                    "--package=balanced-bst-in-rust"
+                ],
+                "filter": {
+                    "name": "bbst_locked_test",
+                    "kind": "test"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug integration test 'bbst_test'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--test=bbst_test",
+                    "--package=balanced-bst-in-rust"
+                ],
+                "filter": {
+                    "name": "bbst_test",
                     "kind": "test"
                 }
             },

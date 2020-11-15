@@ -1,8 +1,9 @@
-use balanced_bst_in_rust::BBST;
+use balanced_bst_in_rust::LockedBBST;
+use rand::seq::SliceRandom;
 
 #[test]
 fn test_basic() {
-    let map = BBST::new();
+    let map = LockedBBST::new();
     //add key, values in random order
     assert_eq!(map.insert(3, 30), true);
     assert_eq!(map.insert(4, 40), true);
@@ -41,7 +42,7 @@ fn test_basic() {
 
 #[test]
 fn test_rebuild() {
-    let map = BBST::new();
+    let map = LockedBBST::new();
     for i in 1..101 {
         assert_eq!(map.insert(i, i * 10), true);
     }
@@ -58,5 +59,29 @@ fn test_rebuild() {
         else {
             assert_eq!(map.search(i), Some(i * 10));
         }
+    }
+}
+
+#[test]
+fn test_uniform() {
+    const N: usize = 100_000;
+    let mut arr = vec![0; N];
+    let mut rng = rand::thread_rng();
+    for i in 0..N {
+        arr[i] = i;
+    }
+    arr.shuffle(&mut rng);
+
+    let map = LockedBBST::new();
+    for i in 0..N {
+        assert_eq!(map.insert(arr[i], i), true);
+    }
+
+    for i in 0..N {
+        assert_eq!(map.search(arr[i]), Some(i));
+    }
+
+    for i in 0..N {
+        assert_eq!(map.delete(arr[i]), true);
     }
 }

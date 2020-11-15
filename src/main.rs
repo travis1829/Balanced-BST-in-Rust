@@ -96,7 +96,7 @@ fn test_uniform_FastBBST() {
 }
 
 fn main() {
-    //test_uniform_BBST();
-    //test_uniform_LockedBBST();
+    test_uniform_BBST();
+    test_uniform_LockedBBST();
     test_uniform_FastBBST();
 }

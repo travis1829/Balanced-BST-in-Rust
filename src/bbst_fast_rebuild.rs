@@ -10,7 +10,9 @@ use crossbeam::thread;
 
 const ALPHA_NOM: usize = 2;
 const ALPHA_DENOM: usize = 3;
-const THREAD_SPAWNING_SIZE: usize = 100_000;
+
+const THREAD_SPAWNING_SIZE: usize = 10_000;
+const THREAD_SPAWNING_DEPTH: usize = 2; //results in max 2^(n+1) threads
 
 /* Nodes in the tree that stores the key, value pair. */
 #[derive(Debug)]
@@ -24,13 +26,9 @@ struct Node<K, V> {
 unsafe impl<K, V> Send for Node<K, V> {}
 unsafe impl<K, V> Sync for Node<K, V> {}
 
-/* A struct that stores pointers to nodes
-and can be sent to other threads. */
-struct Cursor<K, V> {
-    ptr: *mut Node<K, V>,
-}
-unsafe impl<K, V> Send for Cursor<K, V> {}
-unsafe impl<K, V> Sync for Cursor<K, V> {}
+struct WrappedArray<K, V> (*mut *mut Node<K, V>);
+unsafe impl<K, V> Send for WrappedArray<K, V> {}
+unsafe impl<K, V> Sync for WrappedArray<K, V> {}
 
 /* A tree data structure that stores key, value pairs. */
 #[derive(Debug)]
@@ -67,21 +65,6 @@ impl<K, V> Node<K, V> {
         }
     }
 }
-
-impl<K, V> Cursor<K, V> {
-    fn new(ptr: *mut Node<K, V>) -> Self {
-        Cursor {
-            ptr,
-        }
-    }
-}
-/*
-impl<K, V> Clone for Cursor<K, V> {
-    fn clone(&self) -> Self {
-        Cursor(self.0.clone())
-    }
-}
-*/
 
 impl<K: Eq + Ord + Clone, V: Clone> FastBBST<K, V> {
     pub fn new() -> Self {
@@ -244,86 +227,75 @@ impl<K: Eq + Ord + Clone, V: Clone> FastBBST<K, V> {
     //assumes node is non-null
     unsafe fn _rebuild(&self, node: &mut *mut Node<K, V>) {
         //Create an empty array
-        let mut vector : Vec<Cursor<K, V>> = Vec::with_capacity((**node).size);
+        let mut vector : Vec<*mut Node<K, V>> = Vec::with_capacity((**node).size);
         vector.set_len((**node).size);
         let mut array = vector.into_boxed_slice();
 
         //Rebuild the tree using the array
-        self._into_array(Cursor::new(*node), &mut array[..]);
-        *node = self._into_tree(&array[..]);
+        self._into_array(*node, &mut array[..], 0);
+        *node = self._into_tree(&mut array[..], 0);
     }
 
     //assumes node is non-null
-    unsafe fn _into_array(&self, cursor: Cursor<K, V>, array: &mut [Cursor<K, V>]) {
-        /* Use crossbeam's scoped thread, because before this function ends, 
-        we will always join with the thread created in this function. */
-        thread::scope(|s| {
+    unsafe fn _into_array(&self, node: *mut Node<K, V>, array: &mut [*mut Node<K, V>], depth: usize) {
+        if (*node).left == ptr::null_mut() || depth > THREAD_SPAWNING_DEPTH || (*(*node).left).size < THREAD_SPAWNING_SIZE {
             let mut index = 0;
-
-            //1. Process the left subtree, using a new thread if the subtree is big
-            let wrapped_handler = 
-            if (*cursor.ptr).left != ptr::null_mut() {
-                let lcursor = Cursor::new((*cursor.ptr).left);
-                index = (*lcursor.ptr).size;
-                if index < THREAD_SPAWNING_SIZE {
-                    self._into_array(lcursor, &mut array[..index]);
-                    None
+            if (*node).left != ptr::null_mut() {
+                index = (*(*node).left).size;
+                self._into_array((*node).left, &mut array[..index], depth+1);
+            }
+            array[index] = node;
+            if (*node).right != ptr::null_mut() {
+                self._into_array((*node).right, &mut array[index+1..], depth+1);
+            }
+        }
+        else {
+            /* Use crossbeam's scoped thread, because before this function ends, 
+            we will always join with the thread created in this function. */
+            thread::scope(|s| {
+                let index = (*(*node).left).size;
+                let node_in_box = Box::from_raw((*node).left);
+                let wrapped_array = WrappedArray(array.as_mut_ptr());
+                s.spawn(move |_| {
+                    let node_ptr = Box::into_raw(node_in_box);
+                    let larray = slice::from_raw_parts_mut(wrapped_array.0, index);
+                    self._into_array(node_ptr, larray, depth+1);
+                });
+                array[index] = node;
+                if (*node).right != ptr::null_mut() {
+                    self._into_array((*node).right, &mut array[index+1..], depth+1);
                 }
-                else {
-                    let larray = slice::from_raw_parts_mut(array.as_mut_ptr(), index);
-                    Some(s.spawn(move |_| {
-                        self._into_array(lcursor, larray);
-                    }))
-                }
-            }
-            else {
-                None
-            };
-
-            //2. Process the right subtree in this thread
-            if (*cursor.ptr).right != ptr::null_mut() {
-                let rcursor = Cursor::new((*cursor.ptr).right);
-                self._into_array(rcursor, &mut array[index+1..]);
-            }
-
-            //3. Finish by writing at the array and joining with the thread (if exists)
-            array[index] = cursor;
-            if let Some(handler) = wrapped_handler {
-                handler.join().unwrap();
-            }
-        }).unwrap();
+            }).unwrap();
+        }
     }
 
-    fn _into_tree(&self, array: &[Cursor<K, V>]) -> *mut Node<K, V> {
+    fn _into_tree(&self, array: &mut [*mut Node<K, V>], depth: usize) -> *mut Node<K, V> {
         let size = array.len();
-        if size == 0 {  //Empty
+        if size == 0 {
             ptr::null_mut()
         }
-        else if size/2 < THREAD_SPAWNING_SIZE { //Small enough to be processed by a single thread
+        else if depth > THREAD_SPAWNING_DEPTH || size < THREAD_SPAWNING_SIZE {
             unsafe {
-                let node = array[size/2].ptr;
-                (*node).left = self._into_tree(&array[..size/2]);
-                (*node).right = self._into_tree(&array[size/2+1..]);
+                let node = array[size/2];
+                (*node).left = self._into_tree(&mut array[..size/2], depth+1);
+                (*node).right = self._into_tree(&mut array[size/2+1..], depth+1);
                 (*node).size = size;
                 node
             }
         }
-        else {  //Process using multiple threads
+        else {
             unsafe {
                 thread::scope(|s| {
-                    //1. Process the left part in a new thread
-                    let larray = slice::from_raw_parts(array.as_ptr(), size/2);
-                    let lhandler = s.spawn(move |_| {
-                        Cursor::new(self._into_tree(larray))
+                    let node = array[size/2];
+                    let wrapped_array = WrappedArray(array.as_mut_ptr());
+                    let handler = s.spawn(move |_| {
+                        let larray = slice::from_raw_parts_mut(wrapped_array.0, size/2);
+                        let result = self._into_tree(larray, depth+1);
+                        Box::from_raw(result)
                     });
-
-                    //2. Process the right part in this thread
-                    let node = array[size/2].ptr;
+                    (*node).right = self._into_tree(&mut array[size/2+1..], depth+1);
+                    (*node).left = Box::into_raw(handler.join().unwrap());
                     (*node).size = size;
-                    (*node).right = self._into_tree(&array[size/2+1..]);
-
-                    //3. Join with the thread
-                    (*node).left = lhandler.join().unwrap().ptr;
                     node
                 }).unwrap()
             }

@@ -6,3 +6,6 @@ pub use bbst_locked::LockedBBST;
 
 mod bbst_fast_rebuild;
 pub use bbst_fast_rebuild::FastBBST;
+
+mod bbst_fast_rebuild2;
+pub use bbst_fast_rebuild2::FastBBST2;

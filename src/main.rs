@@ -2,8 +2,9 @@ use std::time::{Duration, Instant};
 use rand::seq::SliceRandom;
 use balanced_bst_in_rust::{BBST, LockedBBST, FastBBST, FastBBST2};
 
+const N: usize = 1_000_000;
+
 fn test_uniform_BBST() {
-    const N: usize = 1_000_000;
     let mut arr = vec![0; N];
     let mut rng = rand::thread_rng();
     for i in 0..N {
@@ -34,7 +35,6 @@ fn test_uniform_BBST() {
 }
 
 fn test_uniform_LockedBBST() {
-    const N: usize = 1_000_000;
     let mut arr = vec![0; N];
     let mut rng = rand::thread_rng();
     for i in 0..N {
@@ -65,7 +65,6 @@ fn test_uniform_LockedBBST() {
 }
 
 fn test_uniform_FastBBST() {
-    const N: usize = 1_000_000;
     let mut arr = vec![0; N];
     let mut rng = rand::thread_rng();
     for i in 0..N {
@@ -96,7 +95,6 @@ fn test_uniform_FastBBST() {
 }
 
 fn test_uniform_FastBBST2() {
-    const N: usize = 1_000_000;
     let mut arr = vec![0; N];
     let mut rng = rand::thread_rng();
     for i in 0..N {

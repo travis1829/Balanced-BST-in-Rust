@@ -1,13 +1,16 @@
-/* A balanced binary search tree that uses a coarse grained lock.
-Searches are O(logN), and inserts/deletes are amortized O(logN) 
-because rebuilds cost O(N). */
+/// A weight balanced binary search tree that uses a coarse grained lock.
+/// Searches are O(logN), and inserts/deletes are amortized O(logN) 
+/// because rebuilds cost O(N).
 
 use std::ptr;
 use std::sync::{Mutex};
 
+/// A fraction that represents the ALPHA of the weight balanced tree.
 const ALPHA_NOM: usize = 2;
 const ALPHA_DENOM: usize = 3;
 
+/// A node in the tree that stores a key, value pair, the size of the subtree rooted by it,
+/// and a pointer to its left, right child node.
 #[derive(Debug)]
 struct Node<K, V> {
     key: K,
@@ -17,6 +20,7 @@ struct Node<K, V> {
     right: *mut Node<K, V>,
 }
 
+/// A coarse grain locked tree data structure that stores key, value pairs.
 #[derive(Debug)]
 pub struct LockedBBST<K, V> {
     root: Mutex<*mut Node<K, V>>,
@@ -25,6 +29,7 @@ unsafe impl<K, V> Send for LockedBBST<K, V> {}
 unsafe impl<K, V> Sync for LockedBBST<K, V> {}
 
 impl<K: Eq + Ord + Clone, V: Clone> Node<K, V> {
+    /// Makes a new node using `Box::new`, and returns a raw pointer to the node.
     fn new(key: K, value: V) -> *mut Self {
         Box::into_raw(Box::new(Self {
             key,
@@ -37,6 +42,7 @@ impl<K: Eq + Ord + Clone, V: Clone> Node<K, V> {
 }
 
 impl<K, V> Node<K, V> {
+    /// Returns `true` if the subtree rooted by this node is unbalanced. Otherwise, returns `false`.
     fn is_unbalanced(&self) -> bool {
         unsafe {
             if self.left != ptr::null_mut() && (*self.left).size * ALPHA_DENOM > self.size * ALPHA_NOM {
@@ -75,8 +81,8 @@ impl<K: Eq + Ord + Clone, V: Clone> LockedBBST<K, V> {
         }
     }
 
-    /* Searches for a key.
-    Returns Some(value) if exists. Otherwise, returns None. */
+    /// Searches for a key, starting from the root node.
+    /// Returns `Some(value)` if exists. Otherwise, returns `None`.
     pub fn search(&self, key: K) -> Option<V> {
         self._search(&*self.root.lock().unwrap(), key)
     }
@@ -98,9 +104,9 @@ impl<K: Eq + Ord + Clone, V: Clone> LockedBBST<K, V> {
         }
     }
 
-    /* Inserts a node to the tree.
-    Rebuilds the tree if we need to.
-    Returns true if successful, otherwise false. */
+    /// Inserts the `key`, `value` pair in the tree.
+    /// Rebuilds the tree if we need to.
+    /// Returns `true` if successful, otherwise `false`.
     pub fn insert(&self, key: K, value: V) -> bool {
         let mut root_guard = self.root.lock().unwrap();
         unsafe {
@@ -112,12 +118,12 @@ impl<K: Eq + Ord + Clone, V: Clone> LockedBBST<K, V> {
         }
     }
 
-    /* Tries to insert a node under the node "node".
-    Returns a tuple, whose first item is the result of the insertion (success / unsuccess),
-    and the second item points to the root node of the subtree that needs to be rebuilt. */
+    /// Tries to insert a node under the node `node`.
+    /// Returns a tuple, whose first item is the result of the insertion (`true` if successful, otherwise `false`),
+    /// and the second item optionally points to the root node of the subtree that needs to be rebuilt.
     unsafe fn _insert<'a>(&'a self, node: &'a mut *mut Node<K, V>, key: K, value: V) -> (bool, Option<&'a mut *mut Node<K, V>>) {
         if *node == ptr::null_mut() {
-            //does not exist... insert it here
+            //key does not exist. insert it here
             *node = Node::new(key, value);
             (true, None)
         }
@@ -126,13 +132,14 @@ impl<K: Eq + Ord + Clone, V: Clone> LockedBBST<K, V> {
             (false, None)
         }
         else {
+            //get result of the recursive call
             let result = if key < (**node).key 
                             { self._insert(&mut (**node).left, key, value) }
                         else
                             { self._insert(&mut (**node).right, key, value)};
             match result.0 {
                 false => result,
-                true => {
+                true => { //successful insertion. now, this node may be unbalanced
                     (**node).size += 1;
                     match (**node).is_unbalanced() {
                         false => result,
@@ -143,6 +150,9 @@ impl<K: Eq + Ord + Clone, V: Clone> LockedBBST<K, V> {
         }
     }
 
+    /// Deletes `key` (and its associated value) in the tree.
+    /// Rebuilds the tree if we need to.
+    /// Returns `true` if successful, otherwise `false`. */
     pub fn delete(&self, key: K) -> bool {
         let mut root_guard = self.root.lock().unwrap();
         unsafe {
@@ -154,6 +164,9 @@ impl<K: Eq + Ord + Clone, V: Clone> LockedBBST<K, V> {
         }
     }
 
+    /// Tries to delete a node under the node `node`.
+    // Returns a tuple, whose first item is the result of the insertion (`true` if successful, otherwise `false`),
+    /// and the second item optionally points to the root node of the subtree that needs to be rebuilt. */
     unsafe fn _delete<'a>(&'a self, node: &'a mut *mut Node<K, V>, key: K) -> (bool, Option<&'a mut *mut Node<K, V>>) {
         if *node == ptr::null_mut() {
             //does not exist
@@ -162,22 +175,23 @@ impl<K: Eq + Ord + Clone, V: Clone> LockedBBST<K, V> {
         else if (**node).key == key {
             //found node
             if (**node).left == ptr::null_mut() {
-                //node has only right child or no child nodes
+                //node only has a right child or no child
                 *node = (**node).right;
                 (true, None)
             }
             else if (**node).right == ptr::null_mut() {
-                //node has only left child or no child nodes
+                //node only has a left child
                 *node = (**node).left;
                 (true, None)
             }
             else {
                 //node has two child nodes
-                let successor = self._get_most_right((**node).left);            //get inorder predecessor
-                std::mem::swap(&mut (**node).key, &mut (*successor).key);       //swap key with it
-                std::mem::swap(&mut (**node).value, &mut (*successor).value);   //swap value with it
+                let predecessor = self._get_most_right((**node).left);          //get inorder predecessor
+                std::mem::swap(&mut (**node).key, &mut (*predecessor).key);     //swap key with it
+                std::mem::swap(&mut (**node).value, &mut (*predecessor).value); //swap value with it
                 let result = self._delete(&mut (**node).left, key);             //delete the swapped one. we know this will success
                 (**node).size -= 1;
+                //now, this node may be unbalanced
                 match (**node).is_unbalanced() {
                     false => result,
                     true => (true, Some(node)),
@@ -185,13 +199,14 @@ impl<K: Eq + Ord + Clone, V: Clone> LockedBBST<K, V> {
             }
         }
         else {
+            //get result of the recursive call
             let result = if key < (**node).key 
                             { self._delete(&mut (**node).left, key) }
                         else
                             { self._delete(&mut (**node).right, key)};
             match result.0 {
                 false => result,
-                true => {
+                true => { //successful deletion. now, this node may be unbalanced
                     (**node).size -= 1;
                     match (**node).is_unbalanced() {
                         false => result,
@@ -202,7 +217,8 @@ impl<K: Eq + Ord + Clone, V: Clone> LockedBBST<K, V> {
         }
     }
 
-    //assumes node is non-null
+    /// Finds the rightmost node of `node`.
+    /// Unsafe since assumes that `node` is non-null. */
     unsafe fn _get_most_right(&self, node: *mut Node<K, V>) -> *mut Node<K, V> {
         if (*node).right != ptr::null_mut()
             { self._get_most_right((*node).right) }
@@ -210,7 +226,8 @@ impl<K: Eq + Ord + Clone, V: Clone> LockedBBST<K, V> {
             { node }
     }
 
-    //assumes node is non-null
+    /// Rebuilds the subtree rooted by `node`. The pointer that `node` references may change after a call to this function.
+    /// Unsafe since assumes that `node` refers a non-null pointer.
     unsafe fn _rebuild(&self, node: &mut *mut Node<K, V>) {
         //Create an empty array
         let mut vector : Vec<*mut Node<K, V>> = Vec::with_capacity((**node).size);
@@ -222,7 +239,8 @@ impl<K: Eq + Ord + Clone, V: Clone> LockedBBST<K, V> {
         *node = self._into_tree(&array[..]);
     }
 
-    //assumes node is non-null
+    /// For each node in the subtree rooted by `node`, in sorted order,
+    /// we copy a pointer to it to `array`.
     unsafe fn _into_array(&self, node: *mut Node<K, V>, array: &mut [*mut Node<K, V>]) {
         let mut index = 0;
         if (*node).left != ptr::null_mut() {
@@ -235,6 +253,7 @@ impl<K: Eq + Ord + Clone, V: Clone> LockedBBST<K, V> {
         }
     }
 
+    /// Creates a perfectly balanced subtree that contains all nodes in `array`, and returns a pointer to its root node.
     fn _into_tree(&self, array: &[*mut Node<K, V>]) -> *mut Node<K, V> {
         let size = array.len();
         if size == 0 {
@@ -253,6 +272,7 @@ impl<K: Eq + Ord + Clone, V: Clone> LockedBBST<K, V> {
 }
 
 impl<K, V> LockedBBST<K, V> {
+    /// Empties the tree.
     fn clear(&self) {
         let mut root_guard = self.root.lock().unwrap();
         self._clear(*root_guard);

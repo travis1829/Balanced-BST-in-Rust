@@ -7,6 +7,7 @@ use std::ptr;
 use std::sync::{Mutex};
 use std::slice;
 use crossbeam::thread;
+use crossbeam::utils::CachePadded;
 
 /// A fraction that represents the ALPHA of the weight balanced tree.
 const ALPHA_NOM: usize = 2;
@@ -30,7 +31,7 @@ unsafe impl<K, V> Sync for Node<K, V> {}
 
 /// A struct that wraps a mutable pointer to a slice of `*mut Node<K, V>`s.
 /// Can be safely sent to other threads.
-struct WrappedArray<K, V> (*mut *mut Node<K, V>);
+struct WrappedArray<K, V> (*mut CachePadded<*mut Node<K, V>>);
 unsafe impl<K, V> Send for WrappedArray<K, V> {}
 unsafe impl<K, V> Sync for WrappedArray<K, V> {}
 
@@ -245,7 +246,7 @@ impl<K: Eq + Ord + Clone, V: Clone> FastBBST<K, V> {
     /// Unsafe since assumes that `node` refers a non-null pointer.
     unsafe fn _rebuild(&self, node: &mut *mut Node<K, V>) {
         //Create an empty array
-        let mut vector : Vec<*mut Node<K, V>> = Vec::with_capacity((**node).size);
+        let mut vector : Vec<CachePadded<*mut Node<K, V>>> = Vec::with_capacity((**node).size);
         vector.set_len((**node).size);
         let mut array = vector.into_boxed_slice();
 
@@ -256,7 +257,7 @@ impl<K: Eq + Ord + Clone, V: Clone> FastBBST<K, V> {
 
     /// For each node in the subtree rooted by `node`, in sorted order,
     /// we copy a pointer to it to `array`.
-    unsafe fn _into_array(&self, node: *mut Node<K, V>, array: &mut [*mut Node<K, V>], depth: usize) {
+    unsafe fn _into_array(&self, node: *mut Node<K, V>, array: &mut [CachePadded<*mut Node<K, V>>], depth: usize) {
         if (*node).left == ptr::null_mut() || depth > THREAD_SPAWNING_DEPTH || (*(*node).left).size < THREAD_SPAWNING_SIZE {
             //Handle it in this thread
             let mut index = 0;
@@ -264,7 +265,7 @@ impl<K: Eq + Ord + Clone, V: Clone> FastBBST<K, V> {
                 index = (*(*node).left).size;
                 self._into_array((*node).left, &mut array[..index], depth+1);
             }
-            array[index] = node;
+            array[index] = CachePadded::new(node);
             if (*node).right != ptr::null_mut() {
                 self._into_array((*node).right, &mut array[index+1..], depth+1);
             }
@@ -282,7 +283,7 @@ impl<K: Eq + Ord + Clone, V: Clone> FastBBST<K, V> {
                     let larray = slice::from_raw_parts_mut(wrapped_array.0, index);
                     self._into_array(node_ptr, larray, depth+1);
                 });
-                array[index] = node;
+                array[index] = CachePadded::new(node);
                 if (*node).right != ptr::null_mut() {
                     self._into_array((*node).right, &mut array[index+1..], depth+1);
                 }
@@ -291,7 +292,7 @@ impl<K: Eq + Ord + Clone, V: Clone> FastBBST<K, V> {
     }
 
     /// Creates a perfectly balanced subtree that contains all nodes in `array`, and returns a pointer to its root node.
-    fn _into_tree(&self, array: &mut [*mut Node<K, V>], depth: usize) -> *mut Node<K, V> {
+    fn _into_tree(&self, array: &mut [CachePadded<*mut Node<K, V>>], depth: usize) -> *mut Node<K, V> {
         let size = array.len();
         if size == 0 {
             ptr::null_mut()
@@ -299,7 +300,7 @@ impl<K: Eq + Ord + Clone, V: Clone> FastBBST<K, V> {
         else if depth > THREAD_SPAWNING_DEPTH || size < THREAD_SPAWNING_SIZE {
             //Handle it in this thread
             unsafe {
-                let node = array[size/2];
+                let node = array[size/2].into_inner();
                 (*node).left = self._into_tree(&mut array[..size/2], depth+1);
                 (*node).right = self._into_tree(&mut array[size/2+1..], depth+1);
                 (*node).size = size;
@@ -310,7 +311,7 @@ impl<K: Eq + Ord + Clone, V: Clone> FastBBST<K, V> {
             //Handle it in another thread
             unsafe {
                 thread::scope(|s| {
-                    let node = array[size/2];
+                    let node = array[size/2].into_inner();
                     let wrapped_array = WrappedArray(array.as_mut_ptr());
                     let handler = s.spawn(move |_| {
                         let larray = slice::from_raw_parts_mut(wrapped_array.0, size/2);

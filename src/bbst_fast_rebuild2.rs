@@ -8,6 +8,7 @@ use std::sync::{Mutex};
 use std::slice;
 use crossbeam::thread;
 use crossbeam::channel::{unbounded, Sender, Receiver};
+use crossbeam::utils::CachePadded;
 
 /// A fraction that represents the ALPHA of the weight balanced tree.
 const ALPHA_NOM: usize = 2;
@@ -15,7 +16,7 @@ const ALPHA_DENOM: usize = 3;
 
 const NUM_THREADS: usize = 64; //number of threads in the thread pool
 const THREAD_SPAWNING_SIZE: usize = 20_000;
-const THREAD_SPAWNING_DEPTH: usize = 5;//this limits the depth of the recursive calls during rebuilds.
+const THREAD_SPAWNING_DEPTH: usize = 10;//this limits the depth of the recursive calls during rebuilds.
                                         //if the recursive calls become too deep, give the remaining work to another thread.
 
 /// A node in the tree that stores a key, value pair, the size of the subtree rooted by it,
@@ -33,7 +34,7 @@ unsafe impl<K, V> Sync for Node<K, V> {}
 
 /// A struct that wraps a mutable pointer to a slice of `*mut Node<K, V>`s.
 /// Can be safely sent to other threads.
-struct WrappedArray<K, V> (*mut *mut Node<K, V>, usize);
+struct WrappedArray<K, V> (*mut CachePadded<*mut Node<K, V>>, usize);
 unsafe impl<K, V> Send for WrappedArray<K, V> {}
 unsafe impl<K, V> Sync for WrappedArray<K, V> {}
 
@@ -248,7 +249,7 @@ impl<K: Eq + Ord + Clone, V: Clone> FastBBST2<K, V> {
     /// Unsafe since assumes that `node` refers a non-null pointer.
     unsafe fn _rebuild(&self, node: &mut *mut Node<K, V>) {
         //Create an empty array
-        let mut vector : Vec<*mut Node<K, V>> = Vec::with_capacity((**node).size);
+        let mut vector : Vec<CachePadded<*mut Node<K, V>>> = Vec::with_capacity((**node).size);
         vector.set_len((**node).size);
         let mut array = vector.into_boxed_slice();
 
@@ -341,34 +342,34 @@ impl<K: Eq + Ord + Clone, V: Clone> FastBBST2<K, V> {
                         Err(_) => break, //stop if the channel is empty. Note that this may be a premature abort.
                     }
                 }
-                *node = array[array.len()/2];
+                *node = array[array.len()/2].into_inner();
             }).unwrap();
         }
     }
 
     /// For each node in the subtree rooted by `node`, in sorted order,
     /// we copy a pointer to it to `array`.
-    unsafe fn _into_array(&self, node: *mut Node<K, V>, array: &mut [*mut Node<K, V>]) {
+    unsafe fn _into_array(&self, node: *mut Node<K, V>, array: &mut [CachePadded<*mut Node<K, V>>]) {
         let mut index = 0;
         if (*node).left != ptr::null_mut() {
             index = (*(*node).left).size;
             self._into_array((*node).left, &mut array[..index]);
         }
-        array[index] = node;
+        array[index] = CachePadded::new(node);
         if (*node).right != ptr::null_mut() {
             self._into_array((*node).right, &mut array[index+1..]);
         }
     }
 
     /// Creates a perfectly balanced subtree that contains all nodes in `array`, and returns a pointer to its root node.
-    fn _into_tree(&self, array: &[*mut Node<K, V>]) -> *mut Node<K, V> {
+    fn _into_tree(&self, array: &[CachePadded<*mut Node<K, V>>]) -> *mut Node<K, V> {
         let size = array.len();
         if size == 0 {
             ptr::null_mut()
         }
         else {
             unsafe {
-                let node = array[size/2];
+                let node = array[size/2].into_inner();
                 (*node).left = self._into_tree(&array[..size/2]);
                 (*node).right = self._into_tree(&array[size/2+1..]);
                 (*node).size = size;
@@ -381,7 +382,7 @@ impl<K: Eq + Ord + Clone, V: Clone> FastBBST2<K, V> {
     /// we copy a pointer to it to `array`.
     /// If `depth` reached THREAD_SPAWNING_DEPTH and the subtree's size is not small,
     /// send the remaining work to other threads using `sender`.
-    unsafe fn _into_array2(&self, node: *mut Node<K, V>, array: &mut [*mut Node<K, V>], depth: usize, sender: &Sender<(Box<Node<K, V>>, WrappedArray<K, V>)>) {
+    unsafe fn _into_array2(&self, node: *mut Node<K, V>, array: &mut [CachePadded<*mut Node<K, V>>], depth: usize, sender: &Sender<(Box<Node<K, V>>, WrappedArray<K, V>)>) {
         let mut index = 0;
         if (*node).left != ptr::null_mut() {
             index = (*(*node).left).size;
@@ -392,7 +393,7 @@ impl<K: Eq + Ord + Clone, V: Clone> FastBBST2<K, V> {
                 self._into_array2((*node).left, &mut array[..index], depth+1, sender);
             }
         }
-        array[index] = node;
+        array[index] = CachePadded::new(node);
         if (*node).right != ptr::null_mut() {
             if depth == THREAD_SPAWNING_DEPTH && (*(*node).right).size >= THREAD_SPAWNING_SIZE {
                 sender.send((Box::from_raw((*node).left), WrappedArray(array.as_mut_ptr().add(index+1), array.len() - index - 1))).unwrap();
@@ -406,7 +407,7 @@ impl<K: Eq + Ord + Clone, V: Clone> FastBBST2<K, V> {
     /// Creates a perfectly balanced subtree that contains all nodes in `array`, and returns a pointer to its root node.
     /// If `depth` reached THREAD_SPAWNING_DEPTH and the subtree's size is not small,
     /// send the remaining work to other threads using `sender`.
-    unsafe fn _into_tree2(&self, array: &mut [*mut Node<K, V>], depth: usize, sender: &Sender<WrappedArray<K, V>>) {
+    unsafe fn _into_tree2(&self, array: &mut [CachePadded<*mut Node<K, V>>], depth: usize, sender: &Sender<WrappedArray<K, V>>) {
         let size = array.len();
         if depth == THREAD_SPAWNING_DEPTH && size/2 >= THREAD_SPAWNING_SIZE {
             sender.send(WrappedArray(array.as_mut_ptr(), size/2)).unwrap();
@@ -420,9 +421,9 @@ impl<K: Eq + Ord + Clone, V: Clone> FastBBST2<K, V> {
         else if size-size/2-1 != 0 {
             self._into_tree2(&mut array[size/2+1..], depth+1, sender);
         }
-        let node = array[size/2];
-        (*node).left = if size/2 != 0 { array[size/2/2] } else { ptr::null_mut() };
-        (*node).right = if size-size/2-1 != 0 { array[(size/2+1+size)/2] } else { ptr::null_mut() };
+        let node = array[size/2].into_inner();
+        (*node).left = if size/2 != 0 { array[size/2/2].into_inner() } else { ptr::null_mut() };
+        (*node).right = if size-size/2-1 != 0 { array[(size/2+1+size)/2].into_inner() } else { ptr::null_mut() };
     }
 }
 

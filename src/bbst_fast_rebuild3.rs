@@ -4,16 +4,16 @@
 /// because rebuilds cost O(N).
 
 use std::ptr;
-use std::sync::{Mutex};
+use std::sync::{Mutex, Arc};
 use std::slice;
 use crossbeam::thread;
-use crossbeam::channel::{unbounded, Sender, Receiver};
+use crossbeam::deque::{Injector};
+use crate::work_steal::create_work_stealing_thread_pool;
 
 /// A fraction that represents the ALPHA of the weight balanced tree.
 const ALPHA_NOM: usize = 2;
 const ALPHA_DENOM: usize = 3;
 
-const NUM_THREADS: usize = 64; //number of threads in the thread pool
 const THREAD_SPAWNING_SIZE: usize = 20_000;
 const THREAD_SPAWNING_DEPTH: usize = 5;//this limits the depth of the recursive calls during rebuilds.
                                         //if the recursive calls become too deep, give the remaining work to another thread.
@@ -40,11 +40,11 @@ unsafe impl<K, V> Sync for WrappedArray<K, V> {}
 /// A coarse grain locked tree data structure that stores key, value pairs.
 /// Rebuild operations are parallelized using message passing.
 #[derive(Debug)]
-pub struct FastBBST2<K, V> {
+pub struct FastBBST3<K, V> {
     root: Mutex<*mut Node<K, V>>,
 }
-unsafe impl<K, V> Send for FastBBST2<K, V> {}
-unsafe impl<K, V> Sync for FastBBST2<K, V> {}
+unsafe impl<K, V> Send for FastBBST3<K, V> {}
+unsafe impl<K, V> Sync for FastBBST3<K, V> {}
 
 impl<K: Eq + Ord + Clone, V: Clone> Node<K, V> {
     /// Makes a new node using `Box::new`, and returns a raw pointer to the node.
@@ -76,7 +76,7 @@ impl<K, V> Node<K, V> {
     }
 }
 
-impl<K: Eq + Ord + Clone, V: Clone> FastBBST2<K, V> {
+impl<K: Eq + Ord + Clone, V: Clone> FastBBST3<K, V> {
     pub fn new() -> Self {
         Self {
             root: Mutex::new(ptr::null_mut()),
@@ -259,50 +259,8 @@ impl<K: Eq + Ord + Clone, V: Clone> FastBBST2<K, V> {
             *node = self._into_tree(&array[..]);
         }
         else {
-            //Handle it with multiple threads.
-            //Start with calls to _into_array2.
-            let (node, mut array) = thread::scope(|s| {
-                //Use a mpmc channel to send/receive work between threads.
-                let (sender, receiver) : (Sender<(Box<Node<K, V>>, WrappedArray<K, V>)>, Receiver<(Box<Node<K, V>>, WrappedArray<K, V>)>) = unbounded();
-                let mut workers = Vec::with_capacity(NUM_THREADS);               
-                sender.send((Box::from_raw(*node), WrappedArray(array.as_mut_ptr(), array.len()))).unwrap();
-                
-                //Spawn threads and make them handle the work.
-                for _ in 0..NUM_THREADS {
-                    let sender_clone = sender.clone();
-                    let receiver_clone = receiver.clone();
-                    workers.push(
-                        s.spawn(move |_| loop {
-                            let param_pair = receiver_clone.try_recv();
-                            match param_pair {
-                                Ok(param_pair) => {
-                                    let (boxed_node, wrapped_array) = param_pair;
-                                    self._into_array2(Box::into_raw(boxed_node),
-                                                        slice::from_raw_parts_mut(wrapped_array.0, wrapped_array.1),
-                                                        0,
-                                                        &sender_clone);
-                                },
-                                Err(_) => break,
-                            };
-                        })
-                    );
-                }
-                //Now, make this thread also handle the work.
-                loop {
-                    let param_pair = receiver.try_recv();
-                    match param_pair {
-                        Ok(param_pair) => {
-                            let (boxed_node, wrapped_array) = param_pair;
-                            self._into_array2(Box::into_raw(boxed_node),
-                                                slice::from_raw_parts_mut(wrapped_array.0, wrapped_array.1),
-                                                0,
-                                                &sender);
-                        },
-                        Err(_) => break,
-                    }
-                }
-                (node, array)
-            }).unwrap();
+            create_work_stealing_thread_pool((Box::from_raw(*node), WrappedArray(array.as_mut_ptr(), array.len())), 
+                                            Self::_into_array2, Self::convert_argu);
             *node = self._into_tree2(&mut array[..], 0);
         }
     }
@@ -338,28 +296,33 @@ impl<K: Eq + Ord + Clone, V: Clone> FastBBST2<K, V> {
         }
     }
 
+    fn convert_argu<'a>(src: (Box<Node<K, V>>, WrappedArray<K, V>)) -> (*mut Node<K, V>, &'a mut [*mut Node<K, V>], usize) {
+        unsafe {(Box::into_raw(src.0), slice::from_raw_parts_mut(src.1.0, src.1.1), 0)}
+    }
+
     /// For each node in the subtree rooted by `node`, in sorted order,
     /// we copy a pointer to it to `array`.
     /// If `depth` reached THREAD_SPAWNING_DEPTH and the subtree's size is not small,
     /// send the remaining work to other threads using `sender`.
-    unsafe fn _into_array2(&self, node: *mut Node<K, V>, array: &mut [*mut Node<K, V>], depth: usize, sender: &Sender<(Box<Node<K, V>>, WrappedArray<K, V>)>) {
+    unsafe fn _into_array2(argu: (*mut Node<K, V>, &mut [*mut Node<K, V>], usize), sender: &Arc<Injector<(Box<Node<K, V>>, WrappedArray<K, V>)>>) {
+        let (node, array, depth) = argu;
         let mut index = 0;
         if (*node).left != ptr::null_mut() {
             index = (*(*node).left).size;
             if depth == THREAD_SPAWNING_DEPTH && index >= THREAD_SPAWNING_SIZE {
-                sender.send((Box::from_raw((*node).left), WrappedArray(array.as_mut_ptr(), index))).unwrap();
+                sender.push((Box::from_raw((*node).left), WrappedArray(array.as_mut_ptr(), index)));
             }
             else {
-                self._into_array2((*node).left, &mut array[..index], depth+1, sender);
+                Self::_into_array2(((*node).left, &mut array[..index], depth+1), sender);
             }
         }
         array[index] = node;
         if (*node).right != ptr::null_mut() {
             if depth == THREAD_SPAWNING_DEPTH && (*(*node).right).size >= THREAD_SPAWNING_SIZE {
-                sender.send((Box::from_raw((*node).right), WrappedArray(array.as_mut_ptr().add(index+1), array.len() - index - 1))).unwrap();
+                sender.push((Box::from_raw((*node).right), WrappedArray(array.as_mut_ptr().add(index+1), array.len() - index - 1)));
             }
             else {
-                self._into_array2((*node).right, &mut array[index+1..], depth+1, sender);
+                Self::_into_array2(((*node).right, &mut array[index+1..], depth+1), sender);
             }
         }
     }
@@ -401,7 +364,7 @@ impl<K: Eq + Ord + Clone, V: Clone> FastBBST2<K, V> {
     }
 }
 
-impl<K, V> FastBBST2<K, V> {
+impl<K, V> FastBBST3<K, V> {
     /// Empties the tree.
     fn clear(&self) {
         let mut root_guard = self.root.lock().unwrap();
@@ -420,7 +383,7 @@ impl<K, V> FastBBST2<K, V> {
     }
 }
 
-impl<K, V> Drop for FastBBST2<K, V> {
+impl<K, V> Drop for FastBBST3<K, V> {
     fn drop(&mut self) {
         self.clear();
     }

@@ -11,8 +11,8 @@ use crossbeam::deque::{Injector};
 use crate::work_steal::create_work_stealing_thread_pool;
 
 /// A fraction that represents the ALPHA of the weight balanced tree.
-const ALPHA_NOM: usize = 2;
-const ALPHA_DENOM: usize = 3;
+const ALPHA_NOM: usize = 4;
+const ALPHA_DENOM: usize = 7;
 
 const THREAD_SPAWNING_SIZE: usize = 20_000;
 const THREAD_SPAWNING_DEPTH: usize = 5;//this limits the depth of the recursive calls during rebuilds.

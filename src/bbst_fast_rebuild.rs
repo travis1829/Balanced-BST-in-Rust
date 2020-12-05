@@ -9,11 +9,11 @@ use std::slice;
 use crossbeam::thread;
 
 /// A fraction that represents the ALPHA of the weight balanced tree.
-const ALPHA_NOM: usize = 2;
-const ALPHA_DENOM: usize = 3;
+const ALPHA_NOM: usize = 4;
+const ALPHA_DENOM: usize = 7;
 
 const THREAD_SPAWNING_SIZE: usize = 10_000; //we spawn a new thread if the subtree's size is bigger than this
-const THREAD_SPAWNING_DEPTH: usize = 2; //results in max 2^(n+1) threads
+const THREAD_SPAWNING_DEPTH: usize = 4; //results in max 2^(n+1) threads
 
 /// A node in the tree that stores a key, value pair, the size of the subtree rooted by it,
 /// and a pointer to its left, right child node.

@@ -6,8 +6,8 @@ use std::ptr;
 use std::cell::RefCell;
 
 /// A fraction that represents the ALPHA of the weight balanced tree.
-const ALPHA_NOM: usize = 2;
-const ALPHA_DENOM: usize = 3;
+const ALPHA_NOM: usize = 4;
+const ALPHA_DENOM: usize = 7;
 
 /// A node in the tree that stores a key, value pair, the size of the subtree rooted by it,
 /// and a pointer to its left, right child node.

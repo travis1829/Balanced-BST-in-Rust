@@ -10,10 +10,10 @@ use crossbeam::thread;
 use crossbeam::channel::{unbounded, Sender, Receiver};
 
 /// A fraction that represents the ALPHA of the weight balanced tree.
-const ALPHA_NOM: usize = 2;
-const ALPHA_DENOM: usize = 3;
+const ALPHA_NOM: usize = 4;
+const ALPHA_DENOM: usize = 7;
 
-const NUM_THREADS: usize = 64; //number of threads in the thread pool
+const NUM_THREADS: usize = 32; //number of threads in the thread pool
 const THREAD_SPAWNING_SIZE: usize = 20_000;
 const THREAD_SPAWNING_DEPTH: usize = 5;//this limits the depth of the recursive calls during rebuilds.
                                         //if the recursive calls become too deep, give the remaining work to another thread.

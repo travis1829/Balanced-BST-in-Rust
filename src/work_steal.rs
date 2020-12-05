@@ -4,7 +4,7 @@ use std::mem;
 use crossbeam::thread;
 use crossbeam::deque::{Injector, Stealer, Worker};
 
-const NUM_THREADS: usize = 64; //number of threads in the thread pool
+const NUM_THREADS: usize = 32; //number of threads in the thread pool
 
 pub fn create_work_stealing_thread_pool<T: Send + Sync, U>(initial_task: T, 
                                                         function: unsafe fn(U, &Arc<Injector<T>>) -> (),
